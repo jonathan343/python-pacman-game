@@ -225,28 +225,120 @@ class Renderer:
             self.render_ghost(ghost)
     
     def render_ui(self, score_manager: ScoreManager) -> None:
-        """Render UI elements including score, lives, and level.
+        """Render UI elements including score, lives, and level with real-time updates.
         
         Args:
             score_manager: ScoreManager instance with current game state
         """
-        # Render score
-        score_text = self.font.render(f"Score: {score_manager.get_score()}", True, self.WHITE)
+        # Create UI background panel for better visibility
+        ui_panel_height = 150
+        ui_panel = pygame.Surface((self.screen_width, ui_panel_height))
+        ui_panel.set_alpha(200)  # Semi-transparent
+        ui_panel.fill((20, 20, 40))  # Dark blue background
+        self.screen.blit(ui_panel, (0, self.screen_height - ui_panel_height))
+        
+        # Calculate UI positions at bottom of screen
+        ui_y_base = self.screen_height - ui_panel_height + 10
+        
+        # Render score with formatting
+        score_value = score_manager.get_score()
+        score_text = self.font.render(f"SCORE: {score_value:,}", True, self.YELLOW)
+        self.screen.blit(score_text, (20, ui_y_base))
+        
+        # Render lives with visual indicators
+        lives_count = score_manager.get_lives()
+        lives_label = self.font.render("LIVES:", True, self.WHITE)
+        self.screen.blit(lives_label, (20, ui_y_base + 40))
+        
+        # Draw life icons as small Pacman symbols
+        for i in range(lives_count):
+            life_x = 120 + (i * 30)
+            life_y = ui_y_base + 45
+            pygame.draw.circle(self.screen, self.YELLOW, (life_x, life_y), 8)
+            # Add simple mouth to life icon
+            pygame.draw.polygon(self.screen, (20, 20, 40), [
+                (life_x, life_y),
+                (life_x + 6, life_y - 3),
+                (life_x + 6, life_y + 3)
+            ])
+        
+        # Render level indicator
+        level_value = score_manager.get_level()
+        level_text = self.font.render(f"LEVEL: {level_value}", True, self.CYAN)
+        self.screen.blit(level_text, (20, ui_y_base + 80))
+        
+        # Render progress information
+        dots_remaining = score_manager.get_dots_remaining()
+        progress = score_manager.get_level_progress()
+        
+        # Always show progress information
+        if dots_remaining > 0:
+            dots_text = self.small_font.render(f"Dots Remaining: {dots_remaining}", True, self.WHITE)
+        else:
+            dots_text = self.small_font.render("Level Complete!", True, self.YELLOW)
+        self.screen.blit(dots_text, (300, ui_y_base + 10))
+        
+        # Always draw progress bar for level completion
+        bar_width = 200
+        bar_height = 10
+        bar_x = 300
+        bar_y = ui_y_base + 35
+        
+        # Background bar
+        pygame.draw.rect(self.screen, self.GRAY, (bar_x, bar_y, bar_width, bar_height))
+        # Progress fill
+        fill_width = int(bar_width * progress)
+        progress_color = self.YELLOW if dots_remaining > 0 else (0, 255, 0)  # Green when complete
+        pygame.draw.rect(self.screen, progress_color, (bar_x, bar_y, fill_width, bar_height))
+        # Border
+        pygame.draw.rect(self.screen, self.WHITE, (bar_x, bar_y, bar_width, bar_height), 2)
+        
+        # High score display (if available)
+        if hasattr(score_manager, 'high_score') and score_manager.high_score > 0:
+            high_score_text = self.small_font.render(f"HIGH: {score_manager.high_score:,}", True, self.WHITE)
+            self.screen.blit(high_score_text, (500, ui_y_base + 10))
+    
+    def render_ui_minimal(self, score: int, lives: int, level: int) -> None:
+        """Render minimal UI elements for testing purposes.
+        
+        Args:
+            score: Current score value
+            lives: Current lives count
+            level: Current level number
+        """
+        # Simple top-aligned UI for testing
+        score_text = self.font.render(f"Score: {score}", True, self.WHITE)
         self.screen.blit(score_text, (10, 10))
         
-        # Render lives
-        lives_text = self.font.render(f"Lives: {score_manager.get_lives()}", True, self.WHITE)
+        lives_text = self.font.render(f"Lives: {lives}", True, self.WHITE)
         self.screen.blit(lives_text, (10, 50))
         
-        # Render level
-        level_text = self.font.render(f"Level: {score_manager.get_level()}", True, self.WHITE)
+        level_text = self.font.render(f"Level: {level}", True, self.WHITE)
         self.screen.blit(level_text, (10, 90))
+    
+    def get_ui_bounds(self) -> dict:
+        """Get the bounds of UI elements for testing and layout purposes.
         
-        # Render dots remaining (optional debug info)
-        dots_remaining = score_manager.get_dots_remaining()
-        if dots_remaining > 0:
-            dots_text = self.small_font.render(f"Dots: {dots_remaining}", True, self.WHITE)
-            self.screen.blit(dots_text, (10, 130))
+        Returns:
+            Dictionary containing UI element positions and dimensions
+        """
+        ui_panel_height = 150
+        ui_y_base = self.screen_height - ui_panel_height + 10
+        
+        return {
+            'ui_panel': {
+                'x': 0,
+                'y': self.screen_height - ui_panel_height,
+                'width': self.screen_width,
+                'height': ui_panel_height
+            },
+            'score': {'x': 20, 'y': ui_y_base},
+            'lives_label': {'x': 20, 'y': ui_y_base + 40},
+            'lives_icons': {'x': 120, 'y': ui_y_base + 45},
+            'level': {'x': 20, 'y': ui_y_base + 80},
+            'progress_info': {'x': 300, 'y': ui_y_base + 10},
+            'progress_bar': {'x': 300, 'y': ui_y_base + 35, 'width': 200, 'height': 10}
+        }
     
     def render_game_over_screen(self, final_score: int) -> None:
         """Render game over screen with final score.
