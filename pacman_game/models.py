@@ -387,24 +387,32 @@ class ScoreManager:
     POWER_PELLET_POINTS = 50
     GHOST_BASE_POINTS = 200
     
-    def __init__(self):
-        """Initialize the score manager."""
+    def __init__(self, starting_lives: int = 3):
+        """Initialize the score manager.
+        
+        Args:
+            starting_lives: Number of lives to start with
+        """
         self.score = 0
         self.level = 1
-        self.lives = 3
+        self.lives = starting_lives
+        self.starting_lives = starting_lives
         self.ghost_eat_multiplier = 1  # Multiplier for consecutive ghost eating
         self.total_dots_in_level = 0
         self.dots_collected_in_level = 0
         self.ghosts_eaten_in_power_mode = 0  # Track consecutive ghost eating
+        self.game_over = False
         
     def reset_game(self) -> None:
         """Reset all scoring data for a new game."""
         self.score = 0
         self.level = 1
-        self.lives = 3
+        self.lives = self.starting_lives
         self.ghost_eat_multiplier = 1
         self.total_dots_in_level = 0
         self.dots_collected_in_level = 0
+        self.ghosts_eaten_in_power_mode = 0
+        self.game_over = False
     
     def start_new_level(self, total_dots: int) -> None:
         """Start a new level with the given number of dots.
@@ -468,7 +476,20 @@ class ScoreManager:
         """
         self.lives -= 1
         self.ghost_eat_multiplier = 1  # Reset multiplier on life loss
-        return self.lives <= 0
+        self.ghosts_eaten_in_power_mode = 0  # Reset ghost eating counter
+        
+        if self.lives <= 0:
+            self.game_over = True
+            return True
+        return False
+    
+    def is_game_over(self) -> bool:
+        """Check if the game is over.
+        
+        Returns:
+            True if game is over, False otherwise
+        """
+        return self.game_over or self.lives <= 0
     
     def gain_life(self) -> None:
         """Add an extra life (for bonus points, etc.)."""
@@ -769,6 +790,50 @@ class Player:
             List of valid Direction enums
         """
         return self.maze.get_valid_moves(self.position)
+    
+    def check_collision_with_ghost(self, ghost: 'Ghost') -> bool:
+        """Check if the player is colliding with a ghost.
+        
+        Args:
+            ghost: Ghost instance to check collision with
+            
+        Returns:
+            True if collision detected, False otherwise
+        """
+        # Use center positions for more accurate collision detection
+        player_center = self.get_center_position()
+        ghost_center = ghost.get_center_position()
+        
+        # Calculate distance between centers
+        distance = player_center.distance_to(ghost_center)
+        
+        # Collision threshold (roughly half a tile size)
+        collision_threshold = self.maze.tile_size * 0.6
+        
+        return distance < collision_threshold
+    
+    def handle_ghost_collision(self, ghost: 'Ghost', score_manager: 'ScoreManager') -> Tuple[bool, int]:
+        """Handle collision with a ghost.
+        
+        Args:
+            ghost: Ghost that was collided with
+            score_manager: Score manager to update
+            
+        Returns:
+            Tuple of (life_lost, points_earned)
+        """
+        if ghost.mode == GhostMode.FRIGHTENED:
+            # Player eats the ghost
+            points_earned = score_manager.eat_ghost()
+            ghost.set_mode(GhostMode.EATEN, duration=180)  # 3 seconds at 60 FPS
+            return False, points_earned
+        elif ghost.mode == GhostMode.NORMAL:
+            # Ghost catches player - lose a life
+            game_over = score_manager.lose_life()
+            return True, 0
+        else:
+            # Ghost is eaten or in other state - no collision effect
+            return False, 0
 
 
 class Ghost:
@@ -1251,3 +1316,119 @@ class PowerPelletManager:
                     break  # No need to check other ghosts
         
         return player_died, points_earned
+
+
+class CollisionManager:
+    """Manages collision detection and handling between game entities."""
+    
+    def __init__(self, collision_radius: float = 12.0):
+        """Initialize the collision manager.
+        
+        Args:
+            collision_radius: Collision detection radius in pixels
+        """
+        self.collision_radius = collision_radius
+        self.life_lost_this_frame = False
+        self.respawn_timer = 0
+        self.respawn_duration = 120  # 2 seconds at 60 FPS
+    
+    def check_player_ghost_collisions(self, player: Player, ghosts: List[Ghost], 
+                                    score_manager: ScoreManager) -> Tuple[bool, int, bool]:
+        """Check for collisions between player and all ghosts.
+        
+        Args:
+            player: Player instance
+            ghosts: List of ghost instances
+            score_manager: Score manager for point tracking
+            
+        Returns:
+            Tuple of (life_lost, points_earned, game_over)
+        """
+        if self.respawn_timer > 0:
+            self.respawn_timer -= 1
+            return False, 0, False
+        
+        points_earned = 0
+        life_lost = False
+        game_over = False
+        
+        player_center = player.get_center_position()
+        
+        for ghost in ghosts:
+            if self._check_collision(player_center, ghost.get_center_position()):
+                if ghost.mode == GhostMode.FRIGHTENED:
+                    # Player eats ghost
+                    points_earned += score_manager.eat_ghost()
+                    ghost.set_mode(GhostMode.EATEN, duration=180)  # 3 seconds respawn
+                    break  # Only one ghost can be eaten per frame
+                    
+                elif ghost.mode == GhostMode.NORMAL:
+                    # Ghost catches player
+                    life_lost = True
+                    game_over = score_manager.lose_life()
+                    self._handle_life_loss(player, ghosts)
+                    break  # Stop checking other ghosts
+        
+        return life_lost, points_earned, game_over
+    
+    def _check_collision(self, pos1: Position, pos2: Position) -> bool:
+        """Check if two positions are within collision distance.
+        
+        Args:
+            pos1: First position
+            pos2: Second position
+            
+        Returns:
+            True if collision detected, False otherwise
+        """
+        distance = pos1.distance_to(pos2)
+        return distance <= self.collision_radius
+    
+    def _handle_life_loss(self, player: Player, ghosts: List[Ghost]) -> None:
+        """Handle the aftermath of losing a life.
+        
+        Args:
+            player: Player instance to reset
+            ghosts: List of ghosts to reset
+        """
+        # Reset player position
+        player.reset_position()
+        
+        # Reset all ghosts to their starting positions and normal mode
+        for ghost in ghosts:
+            ghost.reset_position()
+        
+        # Set respawn timer to prevent immediate collision after respawn
+        self.respawn_timer = self.respawn_duration
+        self.life_lost_this_frame = True
+    
+    def is_respawning(self) -> bool:
+        """Check if entities are currently in respawn state.
+        
+        Returns:
+            True if in respawn state, False otherwise
+        """
+        return self.respawn_timer > 0
+    
+    def get_respawn_time_remaining(self) -> int:
+        """Get remaining respawn time in frames.
+        
+        Returns:
+            Remaining respawn time in frames
+        """
+        return max(0, self.respawn_timer)
+    
+    def reset(self) -> None:
+        """Reset collision manager state."""
+        self.life_lost_this_frame = False
+        self.respawn_timer = 0
+    
+    def was_life_lost_this_frame(self) -> bool:
+        """Check if a life was lost in the current frame.
+        
+        Returns:
+            True if life was lost this frame, False otherwise
+        """
+        result = self.life_lost_this_frame
+        self.life_lost_this_frame = False  # Reset flag after checking
+        return result

@@ -2,7 +2,7 @@
 Unit tests for core data models and enums.
 """
 import unittest
-from pacman_game.models import Position, Direction, GameState, GhostMode, Maze, Player, ScoreManager, Ghost, PowerPelletManager
+from pacman_game.models import Position, Direction, GameState, GhostMode, Maze, Player, ScoreManager, Ghost, PowerPelletManager, CollisionManager
 
 
 class TestPosition(unittest.TestCase):
@@ -1903,6 +1903,410 @@ class TestPowerPelletManager(unittest.TestCase):
         # Check total score
         expected_total = 50 + 200 + 400  # Power pellet + two ghosts
         self.assertEqual(self.score_manager.get_score(), expected_total)
+
+
+if __name__ == '__main__':
+    unittest.main()
+
+
+class TestScoreManagerLivesSystem(unittest.TestCase):
+    """Test cases for the ScoreManager lives system functionality."""
+    
+    def setUp(self):
+        """Set up test score manager instance."""
+        self.score_manager = ScoreManager(starting_lives=3)
+    
+    def test_score_manager_initialization_with_lives(self):
+        """Test score manager initialization with custom starting lives."""
+        # Test default initialization
+        default_manager = ScoreManager()
+        self.assertEqual(default_manager.lives, 3)
+        self.assertEqual(default_manager.starting_lives, 3)
+        self.assertFalse(default_manager.game_over)
+        
+        # Test custom starting lives
+        custom_manager = ScoreManager(starting_lives=5)
+        self.assertEqual(custom_manager.lives, 5)
+        self.assertEqual(custom_manager.starting_lives, 5)
+        self.assertFalse(custom_manager.game_over)
+    
+    def test_lose_life_functionality(self):
+        """Test life loss mechanics."""
+        initial_lives = self.score_manager.lives
+        
+        # Lose a life - should not be game over
+        game_over = self.score_manager.lose_life()
+        self.assertFalse(game_over)
+        self.assertEqual(self.score_manager.lives, initial_lives - 1)
+        self.assertFalse(self.score_manager.game_over)
+        
+        # Lose another life - still not game over
+        game_over = self.score_manager.lose_life()
+        self.assertFalse(game_over)
+        self.assertEqual(self.score_manager.lives, initial_lives - 2)
+        self.assertFalse(self.score_manager.game_over)
+        
+        # Lose final life - should be game over
+        game_over = self.score_manager.lose_life()
+        self.assertTrue(game_over)
+        self.assertEqual(self.score_manager.lives, 0)
+        self.assertTrue(self.score_manager.game_over)
+    
+    def test_lose_life_resets_multipliers(self):
+        """Test that losing a life resets ghost eating multipliers."""
+        # Set up some multiplier state
+        self.score_manager.ghosts_eaten_in_power_mode = 2
+        self.score_manager.ghost_eat_multiplier = 4
+        
+        # Lose a life
+        self.score_manager.lose_life()
+        
+        # Multipliers should be reset
+        self.assertEqual(self.score_manager.ghost_eat_multiplier, 1)
+        self.assertEqual(self.score_manager.ghosts_eaten_in_power_mode, 0)
+    
+    def test_is_game_over_functionality(self):
+        """Test game over state detection."""
+        # Initially not game over
+        self.assertFalse(self.score_manager.is_game_over())
+        
+        # Lose all lives
+        for _ in range(3):
+            self.score_manager.lose_life()
+        
+        # Should be game over
+        self.assertTrue(self.score_manager.is_game_over())
+    
+    def test_reset_game_with_lives(self):
+        """Test game reset functionality with lives system."""
+        # Modify state
+        self.score_manager.score = 1000
+        self.score_manager.level = 5
+        self.score_manager.lives = 1
+        self.score_manager.game_over = True
+        self.score_manager.ghosts_eaten_in_power_mode = 3
+        
+        # Reset game
+        self.score_manager.reset_game()
+        
+        # Should be back to initial state
+        self.assertEqual(self.score_manager.score, 0)
+        self.assertEqual(self.score_manager.level, 1)
+        self.assertEqual(self.score_manager.lives, self.score_manager.starting_lives)
+        self.assertFalse(self.score_manager.game_over)
+        self.assertEqual(self.score_manager.ghosts_eaten_in_power_mode, 0)
+    
+    def test_gain_life_functionality(self):
+        """Test gaining extra lives."""
+        initial_lives = self.score_manager.lives
+        
+        # Gain a life
+        self.score_manager.gain_life()
+        self.assertEqual(self.score_manager.lives, initial_lives + 1)
+        
+        # Gain multiple lives
+        self.score_manager.gain_life()
+        self.score_manager.gain_life()
+        self.assertEqual(self.score_manager.lives, initial_lives + 3)
+
+
+class TestPlayerGhostCollision(unittest.TestCase):
+    """Test cases for player-ghost collision detection."""
+    
+    def setUp(self):
+        """Set up test instances."""
+        self.maze = Maze(tile_size=20)
+        self.player_position = Position(260, 380)
+        self.ghost_position = Position(280, 380)  # Close to player
+        self.player = Player(self.player_position, self.maze)
+        self.ghost = Ghost(self.ghost_position, self.maze, color="red")
+        self.score_manager = ScoreManager()
+    
+    def test_check_collision_with_ghost_close_positions(self):
+        """Test collision detection when player and ghost are close."""
+        # Position ghost very close to player
+        close_ghost = Ghost(Position(265, 385), self.maze)  # 5 pixels away
+        
+        # Should detect collision
+        collision = self.player.check_collision_with_ghost(close_ghost)
+        self.assertTrue(collision)
+    
+    def test_check_collision_with_ghost_far_positions(self):
+        """Test collision detection when player and ghost are far apart."""
+        # Position ghost far from player
+        far_ghost = Ghost(Position(100, 100), self.maze)  # Far away
+        
+        # Should not detect collision
+        collision = self.player.check_collision_with_ghost(far_ghost)
+        self.assertFalse(collision)
+    
+    def test_handle_ghost_collision_frightened_ghost(self):
+        """Test collision handling with frightened ghost (player eats ghost)."""
+        # Set ghost to frightened mode
+        self.ghost.set_mode(GhostMode.FRIGHTENED, duration=300)
+        
+        # Handle collision
+        life_lost, points_earned = self.player.handle_ghost_collision(self.ghost, self.score_manager)
+        
+        # Player should eat ghost, not lose life
+        self.assertFalse(life_lost)
+        self.assertEqual(points_earned, 200)  # Base ghost points
+        self.assertEqual(self.ghost.mode, GhostMode.EATEN)
+        
+        # Score should be updated
+        self.assertEqual(self.score_manager.score, 200)
+    
+    def test_handle_ghost_collision_normal_ghost(self):
+        """Test collision handling with normal ghost (player loses life)."""
+        # Ghost is in normal mode by default
+        initial_lives = self.score_manager.lives
+        
+        # Handle collision
+        life_lost, points_earned = self.player.handle_ghost_collision(self.ghost, self.score_manager)
+        
+        # Player should lose life, no points earned
+        self.assertTrue(life_lost)
+        self.assertEqual(points_earned, 0)
+        self.assertEqual(self.score_manager.lives, initial_lives - 1)
+    
+    def test_handle_ghost_collision_eaten_ghost(self):
+        """Test collision handling with eaten ghost (no effect)."""
+        # Set ghost to eaten mode
+        self.ghost.set_mode(GhostMode.EATEN, duration=180)
+        initial_lives = self.score_manager.lives
+        
+        # Handle collision
+        life_lost, points_earned = self.player.handle_ghost_collision(self.ghost, self.score_manager)
+        
+        # No effect should occur
+        self.assertFalse(life_lost)
+        self.assertEqual(points_earned, 0)
+        self.assertEqual(self.score_manager.lives, initial_lives)
+    
+    def test_multiple_ghost_eating_point_progression(self):
+        """Test point progression when eating multiple ghosts."""
+        # Create multiple frightened ghosts
+        ghosts = []
+        for i in range(4):
+            ghost = Ghost(Position(260 + i*5, 380), self.maze, color=f"ghost_{i}")
+            ghost.set_mode(GhostMode.FRIGHTENED, duration=300)
+            ghosts.append(ghost)
+        
+        expected_points = [200, 400, 800, 1600]  # Point progression
+        total_points = 0
+        
+        # Eat ghosts one by one
+        for i, ghost in enumerate(ghosts):
+            life_lost, points_earned = self.player.handle_ghost_collision(ghost, self.score_manager)
+            
+            self.assertFalse(life_lost)
+            self.assertEqual(points_earned, expected_points[i])
+            total_points += points_earned
+            self.assertEqual(self.score_manager.score, total_points)
+
+
+class TestCollisionManager(unittest.TestCase):
+    """Test cases for the CollisionManager class."""
+    
+    def setUp(self):
+        """Set up test instances."""
+        self.maze = Maze(tile_size=20)
+        self.player = Player(Position(260, 380), self.maze)
+        self.ghost = Ghost(Position(265, 385), self.maze)  # Close to player
+        self.score_manager = ScoreManager()
+        self.collision_manager = CollisionManager()
+    
+    def test_collision_manager_initialization(self):
+        """Test collision manager initialization."""
+        self.assertEqual(self.collision_manager.collision_radius, 12.0)
+        self.assertFalse(self.collision_manager.life_lost_this_frame)
+        self.assertEqual(self.collision_manager.respawn_timer, 0)
+        self.assertEqual(self.collision_manager.respawn_duration, 120)
+    
+    def test_check_collision_detection(self):
+        """Test basic collision detection between positions."""
+        pos1 = Position(100, 100)
+        pos2 = Position(105, 105)  # 5√2 ≈ 7.07 pixels away
+        pos3 = Position(150, 150)  # Far away
+        
+        # Close positions should collide
+        self.assertTrue(self.collision_manager._check_collision(pos1, pos2))
+        
+        # Far positions should not collide
+        self.assertFalse(self.collision_manager._check_collision(pos1, pos3))
+    
+    def test_player_ghost_collision_normal_ghost(self):
+        """Test collision with normal ghost (player loses life)."""
+        # Ghost is in normal mode by default
+        initial_lives = self.score_manager.lives
+        
+        # Check collision
+        life_lost, points_earned, game_over = self.collision_manager.check_player_ghost_collisions(
+            self.player, [self.ghost], self.score_manager
+        )
+        
+        # Player should lose life
+        self.assertTrue(life_lost)
+        self.assertEqual(points_earned, 0)
+        self.assertFalse(game_over)  # Still has lives left
+        self.assertEqual(self.score_manager.lives, initial_lives - 1)
+        
+        # Player and ghost should be reset to starting positions
+        self.assertEqual(self.player.position.x, self.player.start_position.x)
+        self.assertEqual(self.player.position.y, self.player.start_position.y)
+        self.assertEqual(self.ghost.position.x, self.ghost.start_position.x)
+        self.assertEqual(self.ghost.position.y, self.ghost.start_position.y)
+    
+    def test_player_ghost_collision_frightened_ghost(self):
+        """Test collision with frightened ghost (player eats ghost)."""
+        # Set ghost to frightened mode
+        self.ghost.set_mode(GhostMode.FRIGHTENED, duration=300)
+        
+        # Check collision
+        life_lost, points_earned, game_over = self.collision_manager.check_player_ghost_collisions(
+            self.player, [self.ghost], self.score_manager
+        )
+        
+        # Player should eat ghost
+        self.assertFalse(life_lost)
+        self.assertEqual(points_earned, 200)
+        self.assertFalse(game_over)
+        self.assertEqual(self.ghost.mode, GhostMode.EATEN)
+        self.assertEqual(self.score_manager.score, 200)
+    
+    def test_collision_during_respawn_timer(self):
+        """Test that collisions are ignored during respawn timer."""
+        # Trigger a life loss to start respawn timer
+        self.collision_manager._handle_life_loss(self.player, [self.ghost])
+        
+        # Position ghost close to player again
+        self.ghost.position = Position(265, 385)
+        
+        # Check collision during respawn timer
+        life_lost, points_earned, game_over = self.collision_manager.check_player_ghost_collisions(
+            self.player, [self.ghost], self.score_manager
+        )
+        
+        # No collision should be detected during respawn
+        self.assertFalse(life_lost)
+        self.assertEqual(points_earned, 0)
+        self.assertFalse(game_over)
+    
+    def test_respawn_timer_countdown(self):
+        """Test respawn timer countdown functionality."""
+        # Start respawn timer
+        self.collision_manager._handle_life_loss(self.player, [self.ghost])
+        
+        # Move ghost away to avoid collision during countdown
+        self.ghost.position = Position(500, 500)  # Far away
+        
+        initial_timer = self.collision_manager.respawn_timer
+        self.assertTrue(self.collision_manager.is_respawning())
+        self.assertEqual(self.collision_manager.get_respawn_time_remaining(), initial_timer)
+        
+        # Simulate timer countdown
+        for _ in range(60):  # 1 second at 60 FPS
+            self.collision_manager.check_player_ghost_collisions(
+                self.player, [self.ghost], self.score_manager
+            )
+        
+        # Timer should have decreased
+        self.assertEqual(self.collision_manager.respawn_timer, initial_timer - 60)
+        self.assertTrue(self.collision_manager.is_respawning())
+        
+        # Continue until timer expires (need to account for already decremented timer)
+        remaining_time = self.collision_manager.respawn_timer
+        for _ in range(remaining_time + 1):  # +1 to ensure it goes to 0
+            self.collision_manager.check_player_ghost_collisions(
+                self.player, [self.ghost], self.score_manager
+            )
+        
+        # Timer should be expired
+        self.assertFalse(self.collision_manager.is_respawning())
+        self.assertEqual(self.collision_manager.get_respawn_time_remaining(), 0)
+    
+    def test_game_over_on_final_life(self):
+        """Test game over when losing final life."""
+        # Reduce lives to 1
+        self.score_manager.lives = 1
+        
+        # Check collision that causes final life loss
+        life_lost, points_earned, game_over = self.collision_manager.check_player_ghost_collisions(
+            self.player, [self.ghost], self.score_manager
+        )
+        
+        # Should trigger game over
+        self.assertTrue(life_lost)
+        self.assertTrue(game_over)
+        self.assertEqual(self.score_manager.lives, 0)
+        self.assertTrue(self.score_manager.is_game_over())
+    
+    def test_multiple_ghosts_collision_priority(self):
+        """Test collision handling with multiple ghosts."""
+        # Create multiple ghosts - one normal, one frightened
+        normal_ghost = Ghost(Position(265, 385), self.maze, color="red")
+        frightened_ghost = Ghost(Position(267, 387), self.maze, color="blue")
+        frightened_ghost.set_mode(GhostMode.FRIGHTENED, duration=300)
+        
+        ghosts = [normal_ghost, frightened_ghost]
+        
+        # Check collision - normal ghost should take priority (cause death)
+        life_lost, points_earned, game_over = self.collision_manager.check_player_ghost_collisions(
+            self.player, ghosts, self.score_manager
+        )
+        
+        # Should lose life due to normal ghost
+        self.assertTrue(life_lost)
+        self.assertEqual(points_earned, 0)
+    
+    def test_collision_manager_reset(self):
+        """Test collision manager reset functionality."""
+        # Set some state
+        self.collision_manager.life_lost_this_frame = True
+        self.collision_manager.respawn_timer = 60
+        
+        # Reset
+        self.collision_manager.reset()
+        
+        # State should be cleared
+        self.assertFalse(self.collision_manager.life_lost_this_frame)
+        self.assertEqual(self.collision_manager.respawn_timer, 0)
+    
+    def test_was_life_lost_this_frame_flag(self):
+        """Test life lost this frame flag functionality."""
+        # Initially false
+        self.assertFalse(self.collision_manager.was_life_lost_this_frame())
+        
+        # Trigger life loss
+        self.collision_manager._handle_life_loss(self.player, [self.ghost])
+        
+        # Should be true once, then reset
+        self.assertTrue(self.collision_manager.was_life_lost_this_frame())
+        self.assertFalse(self.collision_manager.was_life_lost_this_frame())  # Should reset after checking
+    
+    def test_handle_life_loss_resets_entities(self):
+        """Test that life loss properly resets player and ghosts."""
+        # Move entities away from starting positions
+        self.player.position = Position(100, 100)
+        self.player.direction = Direction.RIGHT
+        self.player.is_moving = True
+        
+        self.ghost.position = Position(200, 200)
+        self.ghost.mode = GhostMode.FRIGHTENED
+        
+        # Handle life loss
+        self.collision_manager._handle_life_loss(self.player, [self.ghost])
+        
+        # Player should be reset
+        self.assertEqual(self.player.position.x, self.player.start_position.x)
+        self.assertEqual(self.player.position.y, self.player.start_position.y)
+        self.assertEqual(self.player.direction, Direction.NONE)
+        self.assertFalse(self.player.is_moving)
+        
+        # Ghost should be reset
+        self.assertEqual(self.ghost.position.x, self.ghost.start_position.x)
+        self.assertEqual(self.ghost.position.y, self.ghost.start_position.y)
+        self.assertEqual(self.ghost.mode, GhostMode.NORMAL)
 
 
 if __name__ == '__main__':

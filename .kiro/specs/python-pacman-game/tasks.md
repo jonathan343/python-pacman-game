@@ -60,7 +60,7 @@
   - Write unit tests for power pellet interactions
   - _Requirements: 3.3, 3.4, 4.1, 4.2, 4.3_
 
-- [ ] 9. Create lives system and collision handling
+- [x] 9. Create lives system and collision handling
   - Implement lives counter and life loss mechanics
   - Add collision detection between player and normal ghosts
   - Create position reset functionality after life loss
