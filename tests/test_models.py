@@ -2,7 +2,7 @@
 Unit tests for core data models and enums.
 """
 import unittest
-from pacman_game.models import Position, Direction, GameState, GhostMode, Maze, Player, ScoreManager, Ghost
+from pacman_game.models import Position, Direction, GameState, GhostMode, Maze, Player, ScoreManager, Ghost, PowerPelletManager
 
 
 class TestPosition(unittest.TestCase):
@@ -782,9 +782,8 @@ class TestScoreManager(unittest.TestCase):
             self.assertEqual(points_earned, expected)
             self.assertEqual(self.score_manager.score, initial_score + total_points)
             
-            # Check multiplier progression
-            if i < 3:  # Multiplier caps at 8 (for 1600 points)
-                self.assertEqual(self.score_manager.ghost_eat_multiplier, 2 ** (i + 1))
+            # Check ghost counter progression
+            self.assertEqual(self.score_manager.ghosts_eaten_in_power_mode, i + 1)
     
     def test_ghost_multiplier_cap(self):
         """Test that ghost eating multiplier caps at 8x (1600 points)."""
@@ -792,8 +791,8 @@ class TestScoreManager(unittest.TestCase):
         for _ in range(10):
             self.score_manager.eat_ghost()
         
-        # Multiplier should be capped at 8
-        self.assertEqual(self.score_manager.ghost_eat_multiplier, 8)
+        # Ghost counter should continue incrementing (no cap)
+        self.assertEqual(self.score_manager.ghosts_eaten_in_power_mode, 10)
         
         # Next ghost should still give 1600 points
         points = self.score_manager.eat_ghost()
@@ -896,13 +895,13 @@ class TestScoreManager(unittest.TestCase):
     def test_ghost_multiplier_reset(self):
         """Test ghost multiplier reset functionality."""
         # Increase multiplier by eating ghosts
-        self.score_manager.eat_ghost()  # 1x -> 2x
-        self.score_manager.eat_ghost()  # 2x -> 4x
-        self.assertEqual(self.score_manager.ghost_eat_multiplier, 4)
+        self.score_manager.eat_ghost()  # First ghost: 200 points
+        self.score_manager.eat_ghost()  # Second ghost: 400 points
+        self.assertEqual(self.score_manager.ghosts_eaten_in_power_mode, 2)
         
         # Reset multiplier
         self.score_manager.reset_ghost_multiplier()
-        self.assertEqual(self.score_manager.ghost_eat_multiplier, 1)
+        self.assertEqual(self.score_manager.ghosts_eaten_in_power_mode, 0)
         
         # Next ghost should give base points
         points = self.score_manager.eat_ghost()
@@ -911,12 +910,12 @@ class TestScoreManager(unittest.TestCase):
     def test_power_pellet_resets_ghost_multiplier(self):
         """Test that power pellet collection resets ghost multiplier."""
         # Increase multiplier
-        self.score_manager.eat_ghost()  # 1x -> 2x
-        self.assertEqual(self.score_manager.ghost_eat_multiplier, 2)
+        self.score_manager.eat_ghost()  # First ghost: 200 points
+        self.assertEqual(self.score_manager.ghosts_eaten_in_power_mode, 1)
         
         # Collect power pellet - should reset multiplier
         self.score_manager.collect_power_pellet()
-        self.assertEqual(self.score_manager.ghost_eat_multiplier, 1)
+        self.assertEqual(self.score_manager.ghosts_eaten_in_power_mode, 0)
     
     def test_game_reset(self):
         """Test complete game reset functionality."""
@@ -1561,6 +1560,349 @@ class TestGhost(unittest.TestCase):
         # (exact behavior depends on maze layout, but should not crash)
         self.assertIsInstance(self.ghost.position.x, (int, float))
         self.assertIsInstance(self.ghost.position.y, (int, float))
+
+
+class TestScoreManagerPowerPelletMechanics(unittest.TestCase):
+    """Test cases for ScoreManager power pellet mechanics."""
+    
+    def setUp(self):
+        """Set up test score manager instance."""
+        self.score_manager = ScoreManager()
+    
+    def test_ghost_eating_point_progression(self):
+        """Test ghost eating point progression: 200, 400, 800, 1600."""
+        # First ghost: 200 points (2^0 * 200)
+        points1 = self.score_manager.eat_ghost()
+        self.assertEqual(points1, 200)
+        self.assertEqual(self.score_manager.ghosts_eaten_in_power_mode, 1)
+        
+        # Second ghost: 400 points (2^1 * 200)
+        points2 = self.score_manager.eat_ghost()
+        self.assertEqual(points2, 400)
+        self.assertEqual(self.score_manager.ghosts_eaten_in_power_mode, 2)
+        
+        # Third ghost: 800 points (2^2 * 200)
+        points3 = self.score_manager.eat_ghost()
+        self.assertEqual(points3, 800)
+        self.assertEqual(self.score_manager.ghosts_eaten_in_power_mode, 3)
+        
+        # Fourth ghost: 1600 points (2^3 * 200)
+        points4 = self.score_manager.eat_ghost()
+        self.assertEqual(points4, 1600)
+        self.assertEqual(self.score_manager.ghosts_eaten_in_power_mode, 4)
+    
+    def test_power_pellet_resets_ghost_counter(self):
+        """Test that collecting power pellet resets ghost eating counter."""
+        # Eat some ghosts
+        self.score_manager.eat_ghost()
+        self.score_manager.eat_ghost()
+        self.assertEqual(self.score_manager.ghosts_eaten_in_power_mode, 2)
+        
+        # Collect power pellet
+        self.score_manager.collect_power_pellet()
+        self.assertEqual(self.score_manager.ghosts_eaten_in_power_mode, 0)
+        
+        # Next ghost should be 200 points again
+        points = self.score_manager.eat_ghost()
+        self.assertEqual(points, 200)
+    
+    def test_reset_ghost_multiplier(self):
+        """Test resetting ghost multiplier."""
+        # Eat some ghosts
+        self.score_manager.eat_ghost()
+        self.score_manager.eat_ghost()
+        self.assertEqual(self.score_manager.ghosts_eaten_in_power_mode, 2)
+        
+        # Reset multiplier
+        self.score_manager.reset_ghost_multiplier()
+        self.assertEqual(self.score_manager.ghosts_eaten_in_power_mode, 0)
+        
+        # Next ghost should be 200 points
+        points = self.score_manager.eat_ghost()
+        self.assertEqual(points, 200)
+
+
+class TestPowerPelletManager(unittest.TestCase):
+    """Test cases for the PowerPelletManager class."""
+    
+    def setUp(self):
+        """Set up test instances."""
+        self.maze = Maze(tile_size=20)
+        self.power_manager = PowerPelletManager()
+        self.score_manager = ScoreManager()
+        
+        # Create test ghosts
+        self.ghost1 = Ghost(Position(100, 100), self.maze, "red")
+        self.ghost2 = Ghost(Position(120, 100), self.maze, "blue")
+        self.ghosts = [self.ghost1, self.ghost2]
+    
+    def test_power_pellet_manager_initialization(self):
+        """Test PowerPelletManager initialization."""
+        self.assertFalse(self.power_manager.is_active)
+        self.assertEqual(self.power_manager.timer, 0)
+        self.assertEqual(len(self.power_manager.affected_ghosts), 0)
+        self.assertEqual(self.power_manager.POWER_PELLET_DURATION, 600)  # 10 seconds at 60 FPS
+    
+    def test_activate_power_mode(self):
+        """Test power mode activation."""
+        # Activate power mode
+        self.power_manager.activate_power_mode(self.ghosts)
+        
+        # Check power manager state
+        self.assertTrue(self.power_manager.is_active)
+        self.assertEqual(self.power_manager.timer, 600)
+        self.assertEqual(len(self.power_manager.affected_ghosts), 2)
+        
+        # Check that ghosts are in frightened mode
+        self.assertEqual(self.ghost1.mode, GhostMode.FRIGHTENED)
+        self.assertEqual(self.ghost2.mode, GhostMode.FRIGHTENED)
+        self.assertEqual(self.ghost1.frightened_timer, 600)
+        self.assertEqual(self.ghost2.frightened_timer, 600)
+    
+    def test_activate_power_mode_skips_eaten_ghosts(self):
+        """Test that power mode activation skips already eaten ghosts."""
+        # Set one ghost to eaten mode
+        self.ghost1.set_mode(GhostMode.EATEN, duration=100)
+        
+        # Activate power mode
+        self.power_manager.activate_power_mode(self.ghosts)
+        
+        # Eaten ghost should remain eaten, other should be frightened
+        self.assertEqual(self.ghost1.mode, GhostMode.EATEN)
+        self.assertEqual(self.ghost2.mode, GhostMode.FRIGHTENED)
+    
+    def test_power_mode_timer_countdown(self):
+        """Test power mode timer countdown."""
+        # Activate power mode
+        self.power_manager.activate_power_mode(self.ghosts)
+        initial_timer = self.power_manager.timer
+        
+        # Update once
+        still_active = self.power_manager.update()
+        self.assertTrue(still_active)
+        self.assertEqual(self.power_manager.timer, initial_timer - 1)
+        
+        # Update multiple times
+        for _ in range(10):
+            self.power_manager.update()
+        
+        self.assertEqual(self.power_manager.timer, initial_timer - 11)
+    
+    def test_power_mode_expiration(self):
+        """Test power mode expiration."""
+        # Activate power mode with short duration
+        self.power_manager.activate_power_mode(self.ghosts)
+        self.power_manager.timer = 2  # Set to expire soon
+        
+        # Update until expiration
+        still_active = self.power_manager.update()
+        self.assertTrue(still_active)
+        self.assertEqual(self.power_manager.timer, 1)
+        
+        still_active = self.power_manager.update()
+        self.assertFalse(still_active)
+        self.assertEqual(self.power_manager.timer, 0)
+        self.assertFalse(self.power_manager.is_active)
+        
+        # Ghosts should return to normal mode
+        self.assertEqual(self.ghost1.mode, GhostMode.NORMAL)
+        self.assertEqual(self.ghost2.mode, GhostMode.NORMAL)
+    
+    def test_power_mode_deactivation_preserves_eaten_ghosts(self):
+        """Test that power mode deactivation preserves eaten ghost state."""
+        # Activate power mode
+        self.power_manager.activate_power_mode(self.ghosts)
+        
+        # Set one ghost to eaten during power mode
+        self.ghost1.set_mode(GhostMode.EATEN, duration=100)
+        
+        # Force expiration
+        self.power_manager.timer = 0
+        self.power_manager.update()
+        
+        # Eaten ghost should remain eaten, frightened ghost should become normal
+        self.assertEqual(self.ghost1.mode, GhostMode.EATEN)
+        self.assertEqual(self.ghost2.mode, GhostMode.NORMAL)
+    
+    def test_eat_ghost_during_power_mode(self):
+        """Test eating ghost during power mode."""
+        # Activate power mode
+        self.power_manager.activate_power_mode(self.ghosts)
+        
+        # Eat a ghost
+        points = self.power_manager.eat_ghost(self.ghost1, self.score_manager)
+        
+        # Should award points and set ghost to eaten mode
+        self.assertEqual(points, 200)  # First ghost eaten
+        self.assertEqual(self.ghost1.mode, GhostMode.EATEN)
+        self.assertEqual(self.ghost1.eaten_timer, 180)  # 3 seconds at 60 FPS
+    
+    def test_eat_ghost_when_not_vulnerable(self):
+        """Test eating ghost when not vulnerable."""
+        # Try to eat ghost in normal mode (not vulnerable)
+        points = self.power_manager.eat_ghost(self.ghost1, self.score_manager)
+        
+        # Should not award points or change ghost state
+        self.assertEqual(points, 0)
+        self.assertEqual(self.ghost1.mode, GhostMode.NORMAL)
+    
+    def test_eat_ghost_when_power_mode_inactive(self):
+        """Test eating ghost when power mode is inactive."""
+        # Set ghost to frightened but don't activate power mode
+        self.ghost1.set_mode(GhostMode.FRIGHTENED)
+        
+        # Try to eat ghost
+        points = self.power_manager.eat_ghost(self.ghost1, self.score_manager)
+        
+        # Should not award points because power mode is inactive
+        self.assertEqual(points, 0)
+    
+    def test_multiple_ghost_eating_point_progression(self):
+        """Test multiple ghost eating with correct point progression."""
+        # Activate power mode
+        self.power_manager.activate_power_mode(self.ghosts)
+        
+        # Eat first ghost (200 points)
+        points1 = self.power_manager.eat_ghost(self.ghost1, self.score_manager)
+        self.assertEqual(points1, 200)
+        
+        # Eat second ghost (400 points)
+        points2 = self.power_manager.eat_ghost(self.ghost2, self.score_manager)
+        self.assertEqual(points2, 400)
+        
+        # Check total score
+        expected_total = 200 + 400  # Ghost points only (no power pellet in this test)
+        self.assertEqual(self.score_manager.get_score(), expected_total)
+    
+    def test_get_remaining_time_methods(self):
+        """Test remaining time calculation methods."""
+        # When inactive
+        self.assertEqual(self.power_manager.get_remaining_time(), 0)
+        self.assertEqual(self.power_manager.get_remaining_seconds(), 0.0)
+        
+        # When active
+        self.power_manager.activate_power_mode(self.ghosts)
+        self.assertEqual(self.power_manager.get_remaining_time(), 600)
+        self.assertEqual(self.power_manager.get_remaining_seconds(), 10.0)
+        
+        # After some time passes
+        self.power_manager.timer = 300
+        self.assertEqual(self.power_manager.get_remaining_time(), 300)
+        self.assertEqual(self.power_manager.get_remaining_seconds(), 5.0)
+    
+    def test_is_power_mode_active(self):
+        """Test power mode active status checking."""
+        self.assertFalse(self.power_manager.is_power_mode_active())
+        
+        self.power_manager.activate_power_mode(self.ghosts)
+        self.assertTrue(self.power_manager.is_power_mode_active())
+        
+        self.power_manager.force_deactivate()
+        self.assertFalse(self.power_manager.is_power_mode_active())
+    
+    def test_force_deactivate(self):
+        """Test force deactivation of power mode."""
+        # Activate power mode
+        self.power_manager.activate_power_mode(self.ghosts)
+        self.assertTrue(self.power_manager.is_active)
+        
+        # Force deactivate
+        self.power_manager.force_deactivate()
+        self.assertFalse(self.power_manager.is_active)
+        self.assertEqual(self.power_manager.timer, 0)
+        self.assertEqual(len(self.power_manager.affected_ghosts), 0)
+        
+        # Ghosts should return to normal
+        self.assertEqual(self.ghost1.mode, GhostMode.NORMAL)
+        self.assertEqual(self.ghost2.mode, GhostMode.NORMAL)
+    
+    def test_check_ghost_collision_player_eats_ghost(self):
+        """Test collision detection when player eats ghost."""
+        player_pos = Position(100, 100)  # Same as ghost1 position
+        
+        # Activate power mode
+        self.power_manager.activate_power_mode(self.ghosts)
+        
+        # Check collision
+        player_died, points = self.power_manager.check_ghost_collision(
+            player_pos, self.ghosts, self.score_manager
+        )
+        
+        # Player should not die and should earn points
+        self.assertFalse(player_died)
+        self.assertEqual(points, 200)  # First ghost eaten
+        self.assertEqual(self.ghost1.mode, GhostMode.EATEN)
+    
+    def test_check_ghost_collision_ghost_kills_player(self):
+        """Test collision detection when ghost kills player."""
+        player_pos = Position(100, 100)  # Same as ghost1 position
+        
+        # Don't activate power mode (ghosts are dangerous)
+        player_died, points = self.power_manager.check_ghost_collision(
+            player_pos, self.ghosts, self.score_manager
+        )
+        
+        # Player should die and earn no points
+        self.assertTrue(player_died)
+        self.assertEqual(points, 0)
+        self.assertEqual(self.ghost1.mode, GhostMode.NORMAL)  # Ghost unchanged
+    
+    def test_check_ghost_collision_no_collision(self):
+        """Test collision detection when no collision occurs."""
+        player_pos = Position(500, 500)  # Far from ghosts
+        
+        # Check collision
+        player_died, points = self.power_manager.check_ghost_collision(
+            player_pos, self.ghosts, self.score_manager
+        )
+        
+        # No collision should occur
+        self.assertFalse(player_died)
+        self.assertEqual(points, 0)
+    
+    def test_check_ghost_collision_multiple_ghosts(self):
+        """Test collision detection with multiple ghosts at same position."""
+        # Position both ghosts at same location as player
+        player_pos = Position(100, 100)
+        self.ghost1.position = Position(100, 100)
+        self.ghost2.position = Position(100, 100)
+        
+        # Activate power mode
+        self.power_manager.activate_power_mode(self.ghosts)
+        
+        # Check collision (should only process first collision)
+        player_died, points = self.power_manager.check_ghost_collision(
+            player_pos, self.ghosts, self.score_manager
+        )
+        
+        # Should eat first ghost encountered
+        self.assertFalse(player_died)
+        self.assertEqual(points, 200)
+        
+        # One ghost should be eaten
+        eaten_count = sum(1 for ghost in self.ghosts if ghost.mode == GhostMode.EATEN)
+        self.assertEqual(eaten_count, 1)
+    
+    def test_power_mode_integration_with_score_manager(self):
+        """Test integration between PowerPelletManager and ScoreManager."""
+        # Collect power pellet first
+        pellet_points = self.score_manager.collect_power_pellet()
+        self.assertEqual(pellet_points, 50)
+        
+        # Activate power mode
+        self.power_manager.activate_power_mode(self.ghosts)
+        
+        # Eat ghosts in sequence
+        points1 = self.power_manager.eat_ghost(self.ghost1, self.score_manager)
+        points2 = self.power_manager.eat_ghost(self.ghost2, self.score_manager)
+        
+        # Check point progression
+        self.assertEqual(points1, 200)
+        self.assertEqual(points2, 400)
+        
+        # Check total score
+        expected_total = 50 + 200 + 400  # Power pellet + two ghosts
+        self.assertEqual(self.score_manager.get_score(), expected_total)
 
 
 if __name__ == '__main__':

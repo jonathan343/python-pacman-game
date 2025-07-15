@@ -52,7 +52,7 @@
   - Write unit tests for ghost AI and movement
   - _Requirements: 3.1, 3.2_
 
-- [ ] 8. Implement power pellet mechanics and ghost interactions
+- [x] 8. Implement power pellet mechanics and ghost interactions
   - Add frightened mode activation when power pellet collected
   - Implement 10-second timer for frightened state
   - Create ghost fleeing behavior during frightened mode

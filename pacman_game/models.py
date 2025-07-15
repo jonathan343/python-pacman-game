@@ -395,6 +395,7 @@ class ScoreManager:
         self.ghost_eat_multiplier = 1  # Multiplier for consecutive ghost eating
         self.total_dots_in_level = 0
         self.dots_collected_in_level = 0
+        self.ghosts_eaten_in_power_mode = 0  # Track consecutive ghost eating
         
     def reset_game(self) -> None:
         """Reset all scoring data for a new game."""
@@ -442,7 +443,7 @@ class ScoreManager:
             Points earned from collecting the power pellet
         """
         self.score += self.POWER_PELLET_POINTS
-        self.ghost_eat_multiplier = 1  # Reset ghost eating multiplier
+        self.ghosts_eaten_in_power_mode = 0  # Reset consecutive ghost counter
         return self.POWER_PELLET_POINTS
     
     def eat_ghost(self) -> int:
@@ -451,9 +452,12 @@ class ScoreManager:
         Returns:
             Points earned from eating the ghost
         """
-        points = self.GHOST_BASE_POINTS * self.ghost_eat_multiplier
+        # Calculate points based on consecutive ghosts eaten: 200, 400, 800, 1600
+        # Cap at 1600 points (multiplier of 8)
+        multiplier = min(2 ** self.ghosts_eaten_in_power_mode, 8)  # Cap at 8x multiplier
+        points = self.GHOST_BASE_POINTS * multiplier
         self.score += points
-        self.ghost_eat_multiplier = min(self.ghost_eat_multiplier * 2, 8)  # Cap at 8x (1600 points)
+        self.ghosts_eaten_in_power_mode += 1
         return points
     
     def lose_life(self) -> bool:
@@ -531,6 +535,7 @@ class ScoreManager:
     def reset_ghost_multiplier(self) -> None:
         """Reset the ghost eating multiplier (when power pellet effect ends)."""
         self.ghost_eat_multiplier = 1
+        self.ghosts_eaten_in_power_mode = 0
 
 
 class Player:
@@ -1109,3 +1114,140 @@ class Ghost:
         """
         distance = self.get_distance_to_player(player_position)
         return distance <= collision_radius
+
+
+class PowerPelletManager:
+    """Manages power pellet effects and ghost interactions."""
+    
+    # Power pellet effect duration in frames (10 seconds at 60 FPS)
+    POWER_PELLET_DURATION = 600
+    
+    def __init__(self):
+        """Initialize the power pellet manager."""
+        self.is_active = False
+        self.timer = 0
+        self.affected_ghosts: List[Ghost] = []
+    
+    def activate_power_mode(self, ghosts: List[Ghost]) -> None:
+        """Activate power pellet mode and set all ghosts to frightened.
+        
+        Args:
+            ghosts: List of ghost instances to affect
+        """
+        self.is_active = True
+        self.timer = self.POWER_PELLET_DURATION
+        self.affected_ghosts = ghosts.copy()
+        
+        # Set all ghosts to frightened mode
+        for ghost in self.affected_ghosts:
+            if ghost.mode != GhostMode.EATEN:  # Don't affect already eaten ghosts
+                ghost.set_mode(GhostMode.FRIGHTENED, duration=self.POWER_PELLET_DURATION)
+    
+    def update(self) -> bool:
+        """Update power pellet timer and handle mode transitions.
+        
+        Returns:
+            True if power mode is still active, False if it ended
+        """
+        if not self.is_active:
+            return False
+        
+        self.timer -= 1
+        
+        # Check if power mode should end
+        if self.timer <= 0:
+            self._deactivate_power_mode()
+            return False
+        
+        return True
+    
+    def _deactivate_power_mode(self) -> None:
+        """Deactivate power pellet mode and return ghosts to normal."""
+        self.is_active = False
+        self.timer = 0
+        
+        # Return all non-eaten ghosts to normal mode
+        for ghost in self.affected_ghosts:
+            if ghost.mode == GhostMode.FRIGHTENED:
+                ghost.set_mode(GhostMode.NORMAL)
+        
+        self.affected_ghosts.clear()
+    
+    def eat_ghost(self, ghost: Ghost, score_manager: ScoreManager) -> int:
+        """Handle ghost eating during power mode.
+        
+        Args:
+            ghost: The ghost being eaten
+            score_manager: Score manager to update points
+            
+        Returns:
+            Points earned from eating the ghost
+        """
+        if not self.is_active or not ghost.is_vulnerable():
+            return 0
+        
+        # Set ghost to eaten mode (3 seconds respawn time at 60 FPS)
+        ghost.set_mode(GhostMode.EATEN, duration=180)
+        
+        # Award points through score manager
+        points = score_manager.eat_ghost()
+        
+        return points
+    
+    def get_remaining_time(self) -> int:
+        """Get remaining power pellet time in frames.
+        
+        Returns:
+            Remaining time in frames, 0 if not active
+        """
+        return self.timer if self.is_active else 0
+    
+    def get_remaining_seconds(self) -> float:
+        """Get remaining power pellet time in seconds.
+        
+        Returns:
+            Remaining time in seconds, 0.0 if not active
+        """
+        return (self.timer / 60.0) if self.is_active else 0.0
+    
+    def is_power_mode_active(self) -> bool:
+        """Check if power pellet mode is currently active.
+        
+        Returns:
+            True if power mode is active, False otherwise
+        """
+        return self.is_active
+    
+    def force_deactivate(self) -> None:
+        """Force deactivate power mode (for game resets, etc.)."""
+        if self.is_active:
+            self._deactivate_power_mode()
+    
+    def check_ghost_collision(self, player_position: Position, ghosts: List[Ghost], 
+                            score_manager: ScoreManager, collision_radius: float = 10.0) -> Tuple[bool, int]:
+        """Check for collisions between player and ghosts, handle eating/death.
+        
+        Args:
+            player_position: Current player position
+            ghosts: List of all ghosts
+            score_manager: Score manager for point tracking
+            collision_radius: Collision detection radius
+            
+        Returns:
+            Tuple of (player_died, points_earned)
+        """
+        points_earned = 0
+        player_died = False
+        
+        for ghost in ghosts:
+            if ghost.collides_with_player(player_position, collision_radius):
+                if ghost.is_vulnerable() and self.is_active:
+                    # Player eats ghost
+                    points_earned = self.eat_ghost(ghost, score_manager)
+                    break  # Only process one ghost eating per frame
+                elif ghost.is_dangerous():
+                    # Ghost kills player
+                    player_died = True
+                    break  # No need to check other ghosts
+        
+        return player_died, points_earned
