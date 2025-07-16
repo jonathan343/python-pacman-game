@@ -263,6 +263,9 @@ class Game:
     
     def _render_frame(self) -> None:
         """Render the current frame."""
+        # Update animations first
+        self.renderer.update_animations()
+        
         # Clear screen
         self.renderer.clear_screen()
         

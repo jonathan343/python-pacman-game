@@ -6,6 +6,7 @@ import pygame
 from typing import List, Tuple, Optional
 from .models import Position, Maze, Player, Ghost, ScoreManager
 from .config import GameConfig
+from .animation import AnimationManager, SpriteRenderer
 
 
 class Renderer:
@@ -31,6 +32,10 @@ class Renderer:
         # Initialize font for UI text
         self.font = pygame.font.Font(None, 36)
         self.small_font = pygame.font.Font(None, 24)
+        
+        # Initialize animation system
+        self.animation_manager = AnimationManager()
+        self.sprite_renderer = SpriteRenderer(tile_size)
         
         # Color constants
         self.BLACK = (0, 0, 0)
@@ -80,12 +85,12 @@ class Renderer:
                     pass
     
     def render_collectibles(self, maze: Maze) -> None:
-        """Render dots and power pellets.
+        """Render dots and power pellets with animations.
         
         Args:
             maze: Maze instance containing collectibles
         """
-        # Render dots
+        # Render dots (static)
         for grid_x, grid_y in maze.dots:
             pixel_x = grid_x * self.tile_size + self.tile_size // 2
             pixel_y = grid_y * self.tile_size + self.tile_size // 2
@@ -98,122 +103,212 @@ class Renderer:
                 2
             )
         
-        # Render power pellets
+        # Render power pellets with flashing animation
+        flash_animation = self.animation_manager.get_power_pellet_animation()
         for grid_x, grid_y in maze.power_pellets:
-            pixel_x = grid_x * self.tile_size + self.tile_size // 2
-            pixel_y = grid_y * self.tile_size + self.tile_size // 2
+            pixel_x = grid_x * self.tile_size
+            pixel_y = grid_y * self.tile_size
             
-            # Draw larger white circle for power pellet
-            pygame.draw.circle(
+            # Use flashing animation for power pellets
+            self.sprite_renderer.render_flashing_sprite(
                 self.screen,
-                self.WHITE,
                 (pixel_x, pixel_y),
-                6
+                self.WHITE,
+                flash_animation,
+                radius=6
             )
     
     def render_player(self, player: Player) -> None:
-        """Render the player (Pacman) with basic shape.
+        """Render the player (Pacman) with sprite animation.
         
         Args:
             player: Player instance to render
         """
-        # Calculate center position
-        center_x = int(player.position.x + self.tile_size // 2)
-        center_y = int(player.position.y + self.tile_size // 2)
-        radius = self.tile_size // 3
+        # Get the appropriate animation for current direction
+        current_direction = player.direction if player.is_moving else player.direction.NONE
+        player_animation = self.animation_manager.get_player_animation(current_direction)
         
-        # Draw yellow circle for Pacman
-        pygame.draw.circle(
-            self.screen,
-            self.YELLOW,
-            (center_x, center_y),
-            radius
-        )
+        # Calculate position for sprite rendering
+        sprite_x = int(player.position.x)
+        sprite_y = int(player.position.y)
         
-        # Add simple mouth animation based on direction and animation frame
-        if player.is_moving and player.animation_frame < 2:
-            mouth_size = 30  # degrees
-            start_angle = 0
+        # Try to render with sprite animation first
+        sprite_key = f"player_{current_direction.name.lower()}"
+        sprite = self.sprite_renderer.get_sprite(f"{sprite_key}_{player_animation.get_current_sprite_index()}")
+        
+        if sprite:
+            self.screen.blit(sprite, (sprite_x, sprite_y))
+        else:
+            # Fallback to basic circle rendering with improved mouth animation
+            center_x = int(player.position.x + self.tile_size // 2)
+            center_y = int(player.position.y + self.tile_size // 2)
+            radius = self.tile_size // 3
             
-            # Adjust mouth direction based on movement direction
-            if player.direction.dx > 0:  # Moving right
-                start_angle = -mouth_size // 2
-            elif player.direction.dx < 0:  # Moving left
-                start_angle = 180 - mouth_size // 2
-            elif player.direction.dy < 0:  # Moving up
-                start_angle = 270 - mouth_size // 2
-            elif player.direction.dy > 0:  # Moving down
-                start_angle = 90 - mouth_size // 2
+            # Draw yellow circle for Pacman
+            pygame.draw.circle(
+                self.screen,
+                self.YELLOW,
+                (center_x, center_y),
+                radius
+            )
             
-            # Draw mouth as a pie slice (triangle)
-            if start_angle != 0:
-                mouth_points = [
-                    (center_x, center_y),
-                    (center_x + radius, center_y),
-                    (center_x + radius * 0.7, center_y + radius * 0.7)
-                ]
-                pygame.draw.polygon(self.screen, self.BLACK, mouth_points)
+            # Enhanced mouth animation based on sprite animation frame
+            if player.is_moving:
+                frame_index = player_animation.get_current_sprite_index()
+                mouth_opening = 0.3 + (frame_index * 0.2)  # Variable mouth opening
+                
+                # Calculate mouth direction based on movement
+                mouth_angle = 0
+                if player.direction.dx > 0:  # Moving right
+                    mouth_angle = 0
+                elif player.direction.dx < 0:  # Moving left
+                    mouth_angle = 180
+                elif player.direction.dy < 0:  # Moving up
+                    mouth_angle = 270
+                elif player.direction.dy > 0:  # Moving down
+                    mouth_angle = 90
+                
+                # Draw animated mouth
+                if frame_index > 0:  # Only show mouth when not in closed frame
+                    mouth_size = int(radius * mouth_opening)
+                    mouth_points = self._calculate_mouth_points(
+                        center_x, center_y, radius, mouth_angle, mouth_size
+                    )
+                    if mouth_points:
+                        pygame.draw.polygon(self.screen, self.BLACK, mouth_points)
+    
+    def _calculate_mouth_points(self, center_x: int, center_y: int, radius: int, 
+                              angle: float, mouth_size: int) -> List[Tuple[int, int]]:
+        """Calculate points for Pacman's mouth based on direction and size.
+        
+        Args:
+            center_x: Center X coordinate
+            center_y: Center Y coordinate
+            radius: Pacman radius
+            angle: Mouth direction angle in degrees
+            mouth_size: Size of the mouth opening
+            
+        Returns:
+            List of points for mouth polygon
+        """
+        import math
+        
+        # Convert angle to radians
+        angle_rad = math.radians(angle)
+        
+        # Calculate mouth points
+        mouth_points = [(center_x, center_y)]
+        
+        # Add points for mouth opening
+        for i in range(-mouth_size, mouth_size + 1, mouth_size // 2):
+            point_angle = angle_rad + math.radians(i)
+            point_x = center_x + int(radius * math.cos(point_angle))
+            point_y = center_y + int(radius * math.sin(point_angle))
+            mouth_points.append((point_x, point_y))
+        
+        return mouth_points
     
     def render_ghost(self, ghost: Ghost) -> None:
-        """Render a ghost with appropriate color and visual state.
+        """Render a ghost with sprite animation and visual state indicators.
         
         Args:
             ghost: Ghost instance to render
         """
-        # Calculate center position
-        center_x = int(ghost.position.x + self.tile_size // 2)
-        center_y = int(ghost.position.y + self.tile_size // 2)
-        radius = self.tile_size // 3
+        # Get the appropriate animation for current ghost mode
+        ghost_animation = self.animation_manager.get_ghost_animation(ghost.mode)
         
-        # Determine ghost color based on mode
-        if ghost.mode.is_vulnerable():  # Frightened mode
-            color = self.GRAY
-        elif ghost.mode == ghost.mode.EATEN:
-            color = self.WHITE
+        # Calculate position for sprite rendering
+        sprite_x = int(ghost.position.x)
+        sprite_y = int(ghost.position.y)
+        
+        # Map ghost color to index for sprite lookup
+        color_index = {"red": 0, "pink": 1, "cyan": 2, "orange": 3}.get(ghost.color, 0)
+        
+        # Try to render with sprite animation first
+        sprite_key = f"ghost_{color_index}_{ghost.mode.value}"
+        sprite = self.sprite_renderer.get_sprite(sprite_key)
+        
+        if sprite:
+            self.screen.blit(sprite, (sprite_x, sprite_y))
         else:
-            # Use ghost's assigned color
-            color = self.ghost_colors.get(ghost.color, self.RED)
-        
-        # Draw ghost body as circle
-        pygame.draw.circle(
-            self.screen,
-            color,
-            (center_x, center_y),
-            radius
-        )
-        
-        # Add simple eyes for identification
-        eye_size = 2
-        eye_offset = radius // 3
-        
-        # Left eye
-        pygame.draw.circle(
-            self.screen,
-            self.WHITE if ghost.mode != ghost.mode.EATEN else self.BLACK,
-            (center_x - eye_offset, center_y - eye_offset // 2),
-            eye_size
-        )
-        
-        # Right eye
-        pygame.draw.circle(
-            self.screen,
-            self.WHITE if ghost.mode != ghost.mode.EATEN else self.BLACK,
-            (center_x + eye_offset, center_y - eye_offset // 2),
-            eye_size
-        )
-        
-        # Add visual indicator for frightened mode
-        if ghost.mode.is_vulnerable():
-            # Draw wavy bottom edge to indicate frightened state
-            bottom_y = center_y + radius
-            for i in range(-radius, radius, 4):
-                wave_y = bottom_y + (2 if i % 8 < 4 else -2)
+            # Fallback to enhanced circle rendering with animations
+            center_x = int(ghost.position.x + self.tile_size // 2)
+            center_y = int(ghost.position.y + self.tile_size // 2)
+            radius = self.tile_size // 3
+            
+            # Determine ghost color based on mode with animation effects
+            if ghost.mode.is_vulnerable():  # Frightened mode
+                # Animate between blue and white for frightened effect
+                frame_index = ghost_animation.get_current_sprite_index()
+                color = self.BLUE if frame_index == 0 else (128, 128, 255)  # Light blue
+            elif ghost.mode == ghost.mode.EATEN:
+                color = self.WHITE
+            else:
+                # Use ghost's assigned color
+                color = self.ghost_colors.get(ghost.color, self.RED)
+            
+            # Draw ghost body as circle
+            pygame.draw.circle(
+                self.screen,
+                color,
+                (center_x, center_y),
+                radius
+            )
+            
+            # Add animated eyes for identification
+            eye_size = 2
+            eye_offset = radius // 3
+            
+            # Animate eye blinking for normal ghosts
+            frame_index = ghost_animation.get_current_sprite_index()
+            eye_open = frame_index == 0 or ghost.mode != ghost.mode.NORMAL
+            
+            if eye_open:
+                # Left eye
                 pygame.draw.circle(
                     self.screen,
-                    color,
-                    (center_x + i, wave_y),
-                    2
+                    self.WHITE if ghost.mode != ghost.mode.EATEN else self.BLACK,
+                    (center_x - eye_offset, center_y - eye_offset // 2),
+                    eye_size
                 )
+                
+                # Right eye
+                pygame.draw.circle(
+                    self.screen,
+                    self.WHITE if ghost.mode != ghost.mode.EATEN else self.BLACK,
+                    (center_x + eye_offset, center_y - eye_offset // 2),
+                    eye_size
+                )
+            else:
+                # Draw closed eyes as lines
+                pygame.draw.line(
+                    self.screen,
+                    self.BLACK,
+                    (center_x - eye_offset - 1, center_y - eye_offset // 2),
+                    (center_x - eye_offset + 1, center_y - eye_offset // 2),
+                    1
+                )
+                pygame.draw.line(
+                    self.screen,
+                    self.BLACK,
+                    (center_x + eye_offset - 1, center_y - eye_offset // 2),
+                    (center_x + eye_offset + 1, center_y - eye_offset // 2),
+                    1
+                )
+            
+            # Add animated visual indicator for frightened mode
+            if ghost.mode.is_vulnerable():
+                # Animated wavy bottom edge to indicate frightened state
+                bottom_y = center_y + radius
+                wave_offset = frame_index * 2  # Animate the wave
+                for i in range(-radius, radius, 3):
+                    wave_y = bottom_y + (2 if (i + wave_offset) % 6 < 3 else -2)
+                    pygame.draw.circle(
+                        self.screen,
+                        color,
+                        (center_x + i, wave_y),
+                        1
+                    )
     
     def render_ghosts(self, ghosts: List[Ghost]) -> None:
         """Render all ghosts in the game.
@@ -405,6 +500,10 @@ class Renderer:
         resume_rect = resume_text.get_rect(center=(self.screen_width // 2, self.screen_height // 2 + 40))
         self.screen.blit(resume_text, resume_rect)
     
+    def update_animations(self) -> None:
+        """Update all animations managed by the renderer."""
+        self.animation_manager.update_all()
+    
     def update_display(self) -> None:
         """Update the display to show all rendered content."""
         pygame.display.flip()
@@ -418,5 +517,6 @@ class Renderer:
         return self.screen
     
     def cleanup(self) -> None:
-        """Clean up Pygame resources."""
+        """Clean up Pygame resources and animation system."""
+        self.sprite_renderer.cleanup()
         pygame.quit()
