@@ -116,7 +116,7 @@
   - Write unit tests for animation system
   - _Requirements: 6.2, 6.3_
 
-- [ ] 16. Enhance ghost AI with multiple behaviors
+- [x] 16. Enhance ghost AI with multiple behaviors
   - Implement different AI patterns for each ghost (chase, ambush, patrol)
   - Add scatter mode behavior for ghosts
   - Create ghost respawn system after being eaten

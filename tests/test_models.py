@@ -2,7 +2,7 @@
 Unit tests for core data models and enums.
 """
 import unittest
-from pacman_game.models import Position, Direction, GameState, GhostMode, Maze, Player, ScoreManager, Ghost, PowerPelletManager, CollisionManager
+from pacman_game.models import Position, Direction, GameState, GhostMode, GhostPersonality, Maze, Player, ScoreManager, Ghost, PowerPelletManager, CollisionManager
 
 
 class TestPosition(unittest.TestCase):
@@ -1073,7 +1073,7 @@ class TestGhost(unittest.TestCase):
         """Set up test ghost instance."""
         self.maze = Maze(tile_size=20)
         self.start_position = Position(260, 160)  # Grid position (13, 8) - safe starting position
-        self.ghost = Ghost(self.start_position, self.maze, color="red", speed=2)
+        self.ghost = Ghost(self.start_position, self.maze, GhostPersonality.BLINKY, speed=2)
         self.player_position = Position(260, 380)  # Player position for AI testing
     
     def test_ghost_initialization(self):
@@ -1161,7 +1161,7 @@ class TestGhost(unittest.TestCase):
     def test_ai_target_normal_mode(self):
         """Test AI targeting in normal mode (chase behavior)."""
         self.ghost.set_mode(GhostMode.NORMAL)
-        self.ghost._update_ai_target(self.player_position)
+        self.ghost._update_ai_target(self.player_position, [])
         
         # Should target player position directly
         self.assertEqual(self.ghost.target_position.x, self.player_position.x)
@@ -1172,7 +1172,7 @@ class TestGhost(unittest.TestCase):
         # Position ghost away from player to ensure flee behavior works
         self.ghost.position = Position(self.player_position.x + 50, self.player_position.y + 50)
         self.ghost.set_mode(GhostMode.FRIGHTENED)
-        self.ghost._update_ai_target(self.player_position)
+        self.ghost._update_ai_target(self.player_position, [])
         
         # Target should be away from player (not equal to player position)
         self.assertNotEqual(self.ghost.target_position.x, self.player_position.x)
@@ -1186,7 +1186,7 @@ class TestGhost(unittest.TestCase):
     def test_ai_target_eaten_mode(self):
         """Test AI targeting in eaten mode (return home)."""
         self.ghost.set_mode(GhostMode.EATEN)
-        self.ghost._update_ai_target(self.player_position)
+        self.ghost._update_ai_target(self.player_position, [])
         
         # Should target home position
         self.assertEqual(self.ghost.target_position.x, self.start_position.x)
@@ -1536,7 +1536,7 @@ class TestGhost(unittest.TestCase):
         player_pos = Position(140, 100)  # Player to the right
         
         # Update AI target
-        self.ghost._update_ai_target(player_pos)
+        self.ghost._update_ai_target(player_pos, [])
         
         # Target should be player position
         self.assertEqual(self.ghost.target_position.x, player_pos.x)
@@ -1632,8 +1632,8 @@ class TestPowerPelletManager(unittest.TestCase):
         self.score_manager = ScoreManager()
         
         # Create test ghosts
-        self.ghost1 = Ghost(Position(100, 100), self.maze, "red")
-        self.ghost2 = Ghost(Position(120, 100), self.maze, "blue")
+        self.ghost1 = Ghost(Position(100, 100), self.maze, GhostPersonality.BLINKY)
+        self.ghost2 = Ghost(Position(120, 100), self.maze, GhostPersonality.PINKY)
         self.ghosts = [self.ghost1, self.ghost2]
     
     def test_power_pellet_manager_initialization(self):
@@ -2019,7 +2019,7 @@ class TestPlayerGhostCollision(unittest.TestCase):
         self.player_position = Position(260, 380)
         self.ghost_position = Position(280, 380)  # Close to player
         self.player = Player(self.player_position, self.maze)
-        self.ghost = Ghost(self.ghost_position, self.maze, color="red")
+        self.ghost = Ghost(self.ghost_position, self.maze, GhostPersonality.BLINKY)
         self.score_manager = ScoreManager()
     
     def test_check_collision_with_ghost_close_positions(self):
@@ -2088,7 +2088,7 @@ class TestPlayerGhostCollision(unittest.TestCase):
         # Create multiple frightened ghosts
         ghosts = []
         for i in range(4):
-            ghost = Ghost(Position(260 + i*5, 380), self.maze, color=f"ghost_{i}")
+            ghost = Ghost(Position(260 + i*5, 380), self.maze, GhostPersonality.BLINKY)
             ghost.set_mode(GhostMode.FRIGHTENED, duration=300)
             ghosts.append(ghost)
         
@@ -2244,8 +2244,8 @@ class TestCollisionManager(unittest.TestCase):
     def test_multiple_ghosts_collision_priority(self):
         """Test collision handling with multiple ghosts."""
         # Create multiple ghosts - one normal, one frightened
-        normal_ghost = Ghost(Position(265, 385), self.maze, color="red")
-        frightened_ghost = Ghost(Position(267, 387), self.maze, color="blue")
+        normal_ghost = Ghost(Position(265, 385), self.maze, GhostPersonality.BLINKY)
+        frightened_ghost = Ghost(Position(267, 387), self.maze, GhostPersonality.PINKY)
         frightened_ghost.set_mode(GhostMode.FRIGHTENED, duration=300)
         
         ghosts = [normal_ghost, frightened_ghost]

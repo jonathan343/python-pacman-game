@@ -122,6 +122,9 @@ class GhostMode(Enum):
     NORMAL = "normal"
     FRIGHTENED = "frightened"
     EATEN = "eaten"
+    SCATTER = "scatter"
+    IN_HOUSE = "in_house"
+    EXITING_HOUSE = "exiting_house"
     
     def is_vulnerable(self) -> bool:
         """Check if ghost is vulnerable to being eaten."""
@@ -129,7 +132,25 @@ class GhostMode(Enum):
     
     def is_dangerous(self) -> bool:
         """Check if ghost is dangerous to the player."""
-        return self == GhostMode.NORMAL
+        return self in (GhostMode.NORMAL, GhostMode.SCATTER)
+
+
+class GhostPersonality(Enum):
+    """Enum representing different ghost AI personalities."""
+    BLINKY = "blinky"  # Aggressive chaser - directly targets player
+    PINKY = "pinky"    # Ambusher - targets ahead of player
+    INKY = "inky"      # Flanker - uses complex targeting based on Blinky and player
+    SUE = "sue"        # Patrol - switches between chase and scatter frequently
+    
+    def get_color(self) -> str:
+        """Get the default color for this ghost personality."""
+        colors = {
+            GhostPersonality.BLINKY: "red",
+            GhostPersonality.PINKY: "pink", 
+            GhostPersonality.INKY: "cyan",
+            GhostPersonality.SUE: "orange"
+        }
+        return colors[self]
 
 
 class Maze:
@@ -837,50 +858,85 @@ class Player:
 
 
 class Ghost:
-    """Represents a ghost with AI behavior, movement, and mode management."""
+    """Represents a ghost with enhanced AI behavior, movement, and mode management."""
     
-    def __init__(self, start_position: Position, maze: Maze, color: str = "red", speed: int = 2):
+    def __init__(self, start_position: Position, maze: Maze, personality: GhostPersonality = GhostPersonality.BLINKY, 
+                 speed: int = 2, ghost_house_position: Optional[Position] = None):
         """Initialize the ghost.
         
         Args:
             start_position: Starting position in pixel coordinates
             maze: Reference to the game maze
-            color: Ghost color identifier for rendering
+            personality: Ghost AI personality type
             speed: Movement speed in pixels per frame
+            ghost_house_position: Position inside the ghost house (defaults to start_position)
         """
         self.position = Position(start_position.x, start_position.y)
         self.start_position = Position(start_position.x, start_position.y)
+        self.ghost_house_position = ghost_house_position or Position(start_position.x, start_position.y)
         self.maze = maze
-        self.color = color
+        self.personality = personality
+        self.color = personality.get_color()
         self.speed = speed
         
         # AI and movement state
-        self.mode = GhostMode.NORMAL
+        self.mode = GhostMode.IN_HOUSE if ghost_house_position else GhostMode.NORMAL
         self.direction = Direction.UP  # Default starting direction
         self.target_position = Position(start_position.x, start_position.y)
         
-        # Mode timing
+        # Mode timing and transitions
         self.frightened_timer = 0
         self.eaten_timer = 0
         self.mode_change_timer = 0
+        self.scatter_timer = 0
+        self.house_exit_timer = 0
         
-        # AI behavior
+        # AI behavior state
         self.last_direction_change = 0
         self.direction_change_cooldown = 10  # frames between direction changes
+        self.scatter_mode_active = False
+        self.dots_eaten_before_exit = 0  # For house exit timing
+        
+        # Scatter mode corner targets for each personality
+        self.scatter_targets = {
+            GhostPersonality.BLINKY: Position(25 * maze.tile_size, 0),  # Top right
+            GhostPersonality.PINKY: Position(2 * maze.tile_size, 0),   # Top left  
+            GhostPersonality.INKY: Position(25 * maze.tile_size, 20 * maze.tile_size),  # Bottom right
+            GhostPersonality.SUE: Position(2 * maze.tile_size, 20 * maze.tile_size)    # Bottom left
+        }
         
         # Animation state
         self.animation_frame = 0
         self.animation_timer = 0
         self.animation_speed = 12  # frames per animation frame
+        
+        # Global mode timing (shared across all ghosts)
+        self.global_mode_timer = 0
+        self.mode_sequence = [
+            (420, GhostMode.SCATTER),  # 7 seconds scatter
+            (1200, GhostMode.NORMAL),  # 20 seconds chase
+            (420, GhostMode.SCATTER),  # 7 seconds scatter
+            (1200, GhostMode.NORMAL),  # 20 seconds chase
+            (300, GhostMode.SCATTER),  # 5 seconds scatter
+            (1200, GhostMode.NORMAL),  # 20 seconds chase
+            (300, GhostMode.SCATTER),  # 5 seconds scatter
+            (-1, GhostMode.NORMAL)     # Infinite chase
+        ]
+        self.current_mode_index = 0
     
-    def update(self, player_position: Position) -> None:
+    def update(self, player_position: Position, other_ghosts: Optional[List['Ghost']] = None, 
+               dots_eaten: int = 0) -> None:
         """Update ghost state including AI, movement, and animation.
         
         Args:
             player_position: Current position of the player for AI targeting
+            other_ghosts: List of other ghosts for complex AI behaviors
+            dots_eaten: Total dots eaten (for house exit timing)
         """
+        self._update_global_mode_timer()
         self._update_mode_timers()
-        self._update_ai_target(player_position)
+        self._update_house_mechanics(dots_eaten)
+        self._update_ai_target(player_position, other_ghosts or [])
         self._update_movement()
         self._update_animation()
     
@@ -891,19 +947,28 @@ class Ghost:
             new_mode: New mode to set
             duration: Duration in frames for timed modes (frightened, eaten)
         """
+        old_mode = self.mode
         self.mode = new_mode
         
         if new_mode == GhostMode.FRIGHTENED:
             self.frightened_timer = duration
-            # Reverse direction when becoming frightened
-            self.direction = self.direction.opposite()
+            # Reverse direction when becoming frightened (unless already frightened)
+            if old_mode != GhostMode.FRIGHTENED:
+                self.direction = self.direction.opposite()
         elif new_mode == GhostMode.EATEN:
             self.eaten_timer = duration
-            # Set target to home position when eaten
-            self.target_position = Position(self.start_position.x, self.start_position.y)
+            # Set target to ghost house for respawn
+            self.target_position = Position(self.ghost_house_position.x, self.ghost_house_position.y)
         elif new_mode == GhostMode.NORMAL:
             self.frightened_timer = 0
             self.eaten_timer = 0
+        elif new_mode == GhostMode.IN_HOUSE:
+            # Reset to house position
+            self.position = Position(self.ghost_house_position.x, self.ghost_house_position.y)
+            self.house_exit_timer = self._get_house_exit_delay()
+        elif new_mode == GhostMode.EXITING_HOUSE:
+            # Target the house exit
+            self.target_position = Position(self.start_position.x, self.start_position.y)
     
     def _update_mode_timers(self) -> None:
         """Update mode-specific timers and handle mode transitions."""
@@ -919,23 +984,182 @@ class Ghost:
                 self.set_mode(GhostMode.NORMAL)
                 self.position = Position(self.start_position.x, self.start_position.y)
     
-    def _update_ai_target(self, player_position: Position) -> None:
-        """Update the ghost's target position based on current mode and AI.
+    def _update_global_mode_timer(self) -> None:
+        """Update the global mode timer and handle scatter/chase transitions."""
+        if self.mode in (GhostMode.FRIGHTENED, GhostMode.EATEN, GhostMode.IN_HOUSE, GhostMode.EXITING_HOUSE):
+            return  # Don't update global timer during special modes
+        
+        self.global_mode_timer += 1
+        
+        # Check if we need to transition to next mode in sequence
+        if self.current_mode_index < len(self.mode_sequence):
+            duration, target_mode = self.mode_sequence[self.current_mode_index]
+            
+            if duration > 0 and self.global_mode_timer >= duration:
+                # Move to next mode in sequence
+                self.current_mode_index += 1
+                self.global_mode_timer = 0
+                
+                # Set the new mode if we haven't reached the end
+                if self.current_mode_index < len(self.mode_sequence):
+                    _, next_mode = self.mode_sequence[self.current_mode_index]
+                    if next_mode != self.mode:  # Only change if different
+                        self.set_mode(next_mode)
+    
+    def _update_house_mechanics(self, dots_eaten: int) -> None:
+        """Update ghost house mechanics and exit timing.
+        
+        Args:
+            dots_eaten: Total number of dots eaten in the game
+        """
+        if self.mode == GhostMode.IN_HOUSE:
+            # Check if it's time to exit the house
+            exit_threshold = self._get_dot_threshold_for_exit()
+            if dots_eaten >= exit_threshold or self.house_exit_timer <= 0:
+                self.set_mode(GhostMode.EXITING_HOUSE)
+            else:
+                self.house_exit_timer -= 1
+        
+        elif self.mode == GhostMode.EXITING_HOUSE:
+            # Check if we've reached the exit position
+            if self.position.distance_to(self.start_position) < self.maze.tile_size:
+                self.set_mode(GhostMode.NORMAL)
+    
+    def _get_house_exit_delay(self) -> int:
+        """Get the delay before this ghost can exit the house.
+        
+        Returns:
+            Delay in frames before ghost can exit
+        """
+        delays = {
+            GhostPersonality.BLINKY: 0,    # Exits immediately
+            GhostPersonality.PINKY: 0,     # Exits immediately  
+            GhostPersonality.INKY: 180,   # 3 seconds
+            GhostPersonality.SUE: 360     # 6 seconds
+        }
+        return delays.get(self.personality, 0)
+    
+    def _get_dot_threshold_for_exit(self) -> int:
+        """Get the number of dots that must be eaten before this ghost exits.
+        
+        Returns:
+            Number of dots required for exit
+        """
+        thresholds = {
+            GhostPersonality.BLINKY: 0,   # Exits immediately
+            GhostPersonality.PINKY: 0,    # Exits immediately
+            GhostPersonality.INKY: 30,    # After 30 dots
+            GhostPersonality.SUE: 60      # After 60 dots
+        }
+        return thresholds.get(self.personality, 0)
+    
+    def _update_ai_target(self, player_position: Position, other_ghosts: List['Ghost']) -> None:
+        """Update the ghost's target position based on current mode and AI personality.
         
         Args:
             player_position: Current position of the player
+            other_ghosts: List of other ghosts for complex AI behaviors
         """
         if self.mode == GhostMode.NORMAL:
-            # Basic chase AI - target player position directly
+            self._calculate_chase_target(player_position, other_ghosts)
+        elif self.mode == GhostMode.SCATTER:
+            self._calculate_scatter_target()
+        elif self.mode == GhostMode.FRIGHTENED:
+            self._calculate_flee_target(player_position)
+        elif self.mode == GhostMode.EATEN:
+            # Return to ghost house
+            self.target_position = Position(self.ghost_house_position.x, self.ghost_house_position.y)
+        elif self.mode == GhostMode.IN_HOUSE:
+            # Move around inside the house
+            self._calculate_house_patrol_target()
+        elif self.mode == GhostMode.EXITING_HOUSE:
+            # Target the house exit
+            self.target_position = Position(self.start_position.x, self.start_position.y)
+    
+    def _calculate_chase_target(self, player_position: Position, other_ghosts: List['Ghost']) -> None:
+        """Calculate target position for chase mode based on ghost personality.
+        
+        Args:
+            player_position: Current position of the player
+            other_ghosts: List of other ghosts for complex AI behaviors
+        """
+        if self.personality == GhostPersonality.BLINKY:
+            # Blinky: Direct chase - target player position
             self.target_position = Position(player_position.x, player_position.y)
         
-        elif self.mode == GhostMode.FRIGHTENED:
-            # Flee from player - target position away from player
-            self._calculate_flee_target(player_position)
+        elif self.personality == GhostPersonality.PINKY:
+            # Pinky: Ambush - target 4 tiles ahead of player
+            # Note: In original Pacman, this had a bug with UP direction, but we'll implement it correctly
+            player_grid_x, player_grid_y = player_position.to_grid(self.maze.tile_size)
+            # Get player's current direction (we'll assume UP for now, this should come from player object)
+            target_x = player_grid_x * self.maze.tile_size
+            target_y = (player_grid_y - 4) * self.maze.tile_size  # 4 tiles ahead (assuming UP)
+            
+            # Clamp to maze boundaries
+            target_x = max(0, min(target_x, (self.maze.width - 1) * self.maze.tile_size))
+            target_y = max(0, min(target_y, (self.maze.height - 1) * self.maze.tile_size))
+            
+            self.target_position = Position(target_x, target_y)
         
-        elif self.mode == GhostMode.EATEN:
-            # Return to home position
-            self.target_position = Position(self.start_position.x, self.start_position.y)
+        elif self.personality == GhostPersonality.INKY:
+            # Inky: Flanking - complex targeting based on Blinky's position and player
+            blinky = None
+            for ghost in other_ghosts:
+                if ghost.personality == GhostPersonality.BLINKY:
+                    blinky = ghost
+                    break
+            
+            if blinky:
+                # Vector from Blinky to 2 tiles ahead of player
+                player_grid_x, player_grid_y = player_position.to_grid(self.maze.tile_size)
+                ahead_x = player_grid_x * self.maze.tile_size
+                ahead_y = (player_grid_y - 2) * self.maze.tile_size  # 2 tiles ahead
+                
+                # Double the vector from Blinky to that point
+                dx = ahead_x - blinky.position.x
+                dy = ahead_y - blinky.position.y
+                
+                target_x = blinky.position.x + (dx * 2)
+                target_y = blinky.position.y + (dy * 2)
+                
+                # Clamp to maze boundaries
+                target_x = max(0, min(target_x, (self.maze.width - 1) * self.maze.tile_size))
+                target_y = max(0, min(target_y, (self.maze.height - 1) * self.maze.tile_size))
+                
+                self.target_position = Position(target_x, target_y)
+            else:
+                # Fallback to direct chase if Blinky not found
+                self.target_position = Position(player_position.x, player_position.y)
+        
+        elif self.personality == GhostPersonality.SUE:
+            # Sue: Patrol - chase if far from player, scatter if close
+            distance_to_player = self.position.distance_to(player_position)
+            if distance_to_player > 8 * self.maze.tile_size:  # More than 8 tiles away
+                # Chase mode
+                self.target_position = Position(player_position.x, player_position.y)
+            else:
+                # Scatter to corner
+                self._calculate_scatter_target()
+    
+    def _calculate_scatter_target(self) -> None:
+        """Calculate target position for scatter mode - go to assigned corner."""
+        self.target_position = Position(
+            self.scatter_targets[self.personality].x,
+            self.scatter_targets[self.personality].y
+        )
+    
+    def _calculate_house_patrol_target(self) -> None:
+        """Calculate target for patrolling inside the ghost house."""
+        # Simple up-down movement in the house
+        house_center_x = self.ghost_house_position.x
+        house_top_y = self.ghost_house_position.y - self.maze.tile_size
+        house_bottom_y = self.ghost_house_position.y + self.maze.tile_size
+        
+        # Alternate between top and bottom of house
+        if abs(self.position.y - house_top_y) < abs(self.position.y - house_bottom_y):
+            self.target_position = Position(house_center_x, house_bottom_y)
+        else:
+            self.target_position = Position(house_center_x, house_top_y)
     
     def _calculate_flee_target(self, player_position: Position) -> None:
         """Calculate a target position to flee from the player.
@@ -1045,9 +1269,9 @@ class Ghost:
         best_distance = float('inf')
         
         for direction in valid_moves:
-            # Calculate position after moving in this direction
-            next_x = self.position.x + (direction.dx * self.maze.tile_size)
-            next_y = self.position.y + (direction.dy * self.maze.tile_size)
+            # Calculate position after moving in this direction (use speed, not tile_size)
+            next_x = self.position.x + (direction.dx * self.speed)
+            next_y = self.position.y + (direction.dy * self.speed)
             next_pos = Position(next_x, next_y)
             
             # Calculate distance to target
