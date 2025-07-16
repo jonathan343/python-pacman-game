@@ -7,7 +7,7 @@ import pygame
 from typing import Dict, Set, Optional, Callable
 from enum import Enum
 
-from .config import Direction, GameState
+from .models import Direction, GameState
 
 
 class InputAction(Enum):
@@ -103,6 +103,10 @@ class InputHandler:
         current_time = pygame.time.get_ticks()
         
         for event in events:
+            # Skip invalid events
+            if event is None or not hasattr(event, 'type'):
+                continue
+                
             if event.type == pygame.KEYDOWN:
                 self.pressed_keys.add(event.key)
                 self.just_pressed_keys.add(event.key)
