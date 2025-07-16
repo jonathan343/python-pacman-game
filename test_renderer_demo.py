@@ -10,7 +10,7 @@ import os
 # Add the pacman_game package to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from pacman_game.models import Maze, Player, Ghost, ScoreManager, Position, GhostMode
+from pacman_game.models import Maze, Player, Ghost, ScoreManager, Position, GhostMode, GhostPersonality
 from pacman_game.renderer import Renderer
 from pacman_game.config import GameConfig
 
@@ -29,10 +29,10 @@ def main():
     
     # Create some ghosts
     ghosts = [
-        Ghost(Position(12 * config.TILE_SIZE, 9 * config.TILE_SIZE), maze, "red", config.GHOST_SPEED),
-        Ghost(Position(13 * config.TILE_SIZE, 9 * config.TILE_SIZE), maze, "pink", config.GHOST_SPEED),
-        Ghost(Position(14 * config.TILE_SIZE, 9 * config.TILE_SIZE), maze, "cyan", config.GHOST_SPEED),
-        Ghost(Position(15 * config.TILE_SIZE, 9 * config.TILE_SIZE), maze, "orange", config.GHOST_SPEED)
+        Ghost(Position(12 * config.TILE_SIZE, 9 * config.TILE_SIZE), maze, GhostPersonality.BLINKY, config.GHOST_SPEED),
+        Ghost(Position(13 * config.TILE_SIZE, 9 * config.TILE_SIZE), maze, GhostPersonality.PINKY, config.GHOST_SPEED),
+        Ghost(Position(14 * config.TILE_SIZE, 9 * config.TILE_SIZE), maze, GhostPersonality.INKY, config.GHOST_SPEED),
+        Ghost(Position(15 * config.TILE_SIZE, 9 * config.TILE_SIZE), maze, GhostPersonality.SUE, config.GHOST_SPEED)
     ]
     
     # Set one ghost to frightened mode for testing

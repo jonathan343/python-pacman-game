@@ -7,7 +7,7 @@ import sys
 from typing import List, Optional
 
 from .models import (
-    Position, Direction, GameState, GhostMode, 
+    Position, Direction, GameState, GhostMode, GhostPersonality,
     Maze, Player, Ghost, ScoreManager
 )
 from .renderer import Renderer
@@ -57,10 +57,10 @@ class Game:
         # Initialize ghosts at different starting positions
         self.ghosts: List[Ghost] = []
         ghost_configs = [
-            {"color": "red", "x": 13, "y": 9},
-            {"color": "pink", "x": 14, "y": 9},
-            {"color": "cyan", "x": 13, "y": 10},
-            {"color": "orange", "x": 14, "y": 10}
+            {"personality": GhostPersonality.BLINKY, "x": 13, "y": 9},
+            {"personality": GhostPersonality.PINKY, "x": 14, "y": 9},
+            {"personality": GhostPersonality.INKY, "x": 13, "y": 10},
+            {"personality": GhostPersonality.SUE, "x": 14, "y": 10}
         ]
         
         for ghost_config in ghost_configs:
@@ -69,7 +69,7 @@ class Game:
             ghost = Ghost(
                 Position(ghost_x, ghost_y),
                 self.maze,
-                ghost_config["color"],
+                ghost_config["personality"],
                 self.config.GHOST_SPEED
             )
             self.ghosts.append(ghost)

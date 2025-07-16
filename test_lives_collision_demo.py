@@ -6,7 +6,7 @@ This script demonstrates the key features implemented in task 9.
 
 from pacman_game.models import (
     Position, Direction, Maze, Player, Ghost, ScoreManager, 
-    CollisionManager, GhostMode
+    CollisionManager, GhostMode, GhostPersonality
 )
 
 
@@ -45,7 +45,7 @@ def test_collision_detection():
     # Set up game entities
     maze = Maze(tile_size=20)
     player = Player(Position(260, 380), maze)
-    ghost = Ghost(Position(265, 385), maze, color="red")  # Close to player
+    ghost = Ghost(Position(265, 385), maze, GhostPersonality.BLINKY)  # Close to player
     
     # Test collision detection
     collision = player.check_collision_with_ghost(ghost)
@@ -54,7 +54,7 @@ def test_collision_detection():
     print(f"Collision detected: {collision}")
     
     # Test with far ghost
-    far_ghost = Ghost(Position(100, 100), maze, color="blue")
+    far_ghost = Ghost(Position(100, 100), maze, GhostPersonality.PINKY)
     collision_far = player.check_collision_with_ghost(far_ghost)
     print(f"Far ghost at {far_ghost.position.x}, {far_ghost.position.y}")
     print(f"Collision with far ghost: {collision_far}")
@@ -70,7 +70,7 @@ def test_ghost_collision_handling():
     score_manager = ScoreManager()
     
     # Test collision with normal ghost (player loses life)
-    normal_ghost = Ghost(Position(265, 385), maze, color="red")
+    normal_ghost = Ghost(Position(265, 385), maze, GhostPersonality.BLINKY)
     print(f"Initial lives: {score_manager.get_lives()}")
     
     life_lost, points = player.handle_ghost_collision(normal_ghost, score_manager)
@@ -78,7 +78,7 @@ def test_ghost_collision_handling():
     print(f"Lives after collision: {score_manager.get_lives()}")
     
     # Test collision with frightened ghost (player eats ghost)
-    frightened_ghost = Ghost(Position(265, 385), maze, color="blue")
+    frightened_ghost = Ghost(Position(265, 385), maze, GhostPersonality.PINKY)
     frightened_ghost.set_mode(GhostMode.FRIGHTENED, duration=300)
     
     life_lost, points = player.handle_ghost_collision(frightened_ghost, score_manager)
@@ -94,7 +94,7 @@ def test_collision_manager():
     
     maze = Maze(tile_size=20)
     player = Player(Position(260, 380), maze)
-    ghost = Ghost(Position(265, 385), maze, color="red")
+    ghost = Ghost(Position(265, 385), maze, GhostPersonality.BLINKY)
     score_manager = ScoreManager()
     collision_manager = CollisionManager()
     
@@ -127,7 +127,7 @@ def test_multiple_ghost_eating():
     # Create multiple frightened ghosts
     ghosts = []
     for i in range(4):
-        ghost = Ghost(Position(260 + i*5, 380), maze, color=f"ghost_{i}")
+        ghost = Ghost(Position(260 + i*5, 380), maze, GhostPersonality.BLINKY)
         ghost.set_mode(GhostMode.FRIGHTENED, duration=300)
         ghosts.append(ghost)
     
@@ -151,7 +151,7 @@ def test_game_over_scenario():
     
     maze = Maze(tile_size=20)
     player = Player(Position(260, 380), maze)
-    ghost = Ghost(Position(265, 385), maze, color="red")
+    ghost = Ghost(Position(265, 385), maze, GhostPersonality.BLINKY)
     score_manager = ScoreManager(starting_lives=1)  # Start with only 1 life
     collision_manager = CollisionManager()
     

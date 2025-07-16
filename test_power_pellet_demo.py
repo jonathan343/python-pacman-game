@@ -3,7 +3,7 @@
 Demonstration of power pellet mechanics and ghost interactions.
 """
 
-from pacman_game.models import Position, Maze, Ghost, ScoreManager, PowerPelletManager, GhostMode
+from pacman_game.models import Position, Maze, Ghost, ScoreManager, PowerPelletManager, GhostMode, GhostPersonality
 
 
 def main():
@@ -17,10 +17,10 @@ def main():
     
     # Create some ghosts
     ghosts = [
-        Ghost(Position(100, 100), maze, "red"),
-        Ghost(Position(120, 100), maze, "blue"),
-        Ghost(Position(140, 100), maze, "pink"),
-        Ghost(Position(160, 100), maze, "orange")
+        Ghost(Position(100, 100), maze, GhostPersonality.BLINKY),
+        Ghost(Position(120, 100), maze, GhostPersonality.PINKY),
+        Ghost(Position(140, 100), maze, GhostPersonality.INKY),
+        Ghost(Position(160, 100), maze, GhostPersonality.SUE)
     ]
     
     print("Initial state:")
